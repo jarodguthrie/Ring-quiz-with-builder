@@ -249,6 +249,7 @@ class RingBuilderService:
 
     async def get_all_metals(self) -> List[Metal]:
         """Get all active metals"""
+        await self._ensure_data_initialized()
         metals = await self.metals_collection.find({"is_active": True}).to_list(100)
         return [Metal(**metal) for metal in metals]
 
