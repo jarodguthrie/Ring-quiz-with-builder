@@ -243,6 +243,7 @@ class RingBuilderService:
 
     async def get_all_settings(self) -> List[Setting]:
         """Get all active settings"""
+        await self._ensure_data_initialized()
         settings = await self.settings_collection.find({"is_active": True}).to_list(100)
         return [Setting(**setting) for setting in settings]
 
