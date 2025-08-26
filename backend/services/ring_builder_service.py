@@ -17,8 +17,8 @@ class RingBuilderService:
         
         # Initialize default data if collections are empty - will be called on first request
     
-    async def _init_default_data(self):
-        """Initialize collections with default ring builder data"""
+    async def _ensure_data_initialized(self):
+        """Ensure collections have default data"""
         try:
             # Check if data exists
             stones_count = await self.stones_collection.count_documents({})
