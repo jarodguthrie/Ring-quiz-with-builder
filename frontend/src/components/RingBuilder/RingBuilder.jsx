@@ -4,8 +4,9 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Progress } from '../ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
-import { ringData, calculatePrice } from '../../data/mock';
-import { Sparkles, Heart, Star, ArrowRight, ArrowLeft, BookOpen, ShoppingBag } from 'lucide-react';
+import { RingBuilderAPI, calculatePrice } from '../../services/ringBuilderApi';
+import { Sparkles, Heart, Star, ArrowRight, ArrowLeft, BookOpen, ShoppingBag, AlertCircle } from 'lucide-react';
+import { useToast } from '../../hooks/use-toast';
 import PersonalityQuiz from './PersonalityQuiz';
 import StoneSelector from './StoneSelector';
 import SettingSelector from './SettingSelector';
@@ -20,6 +21,20 @@ const RingBuilder = () => {
   const [selectedMetal, setSelectedMetal] = useState(null);
   const [selectedCarat, setSelectedCarat] = useState(1.0);
   const [showRecommendations, setShowRecommendations] = useState(false);
+  const [currentPrice, setCurrentPrice] = useState(0);
+  
+  // Data states
+  const [stones, setStones] = useState([]);
+  const [settings, setSettings] = useState([]);
+  const [metals, setMetals] = useState([]);
+  const [recommendations, setRecommendations] = useState(null);
+  
+  // Loading states
+  const [loading, setLoading] = useState(true);
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const { toast } = useToast();
 
   const steps = ['quiz', 'stone', 'setting', 'metal', 'summary'];
   const stepTitles = {
@@ -32,33 +47,96 @@ const RingBuilder = () => {
 
   const progress = (steps.indexOf(currentStep) + 1) / steps.length * 100;
 
+  // Load data on component mount
   useEffect(() => {
-    if (quizResults && !selectedStone) {
-      const recommendation = ringData.recommendations[quizResults];
-      if (recommendation) {
-        setShowRecommendations(true);
-      }
-    }
-  }, [quizResults, selectedStone]);
+    loadInitialData();
+  }, []);
 
-  const handleQuizComplete = (results) => {
-    setQuizResults(results);
+  // Calculate price when selections change
+  useEffect(() => {
+    if (selectedStone && selectedSetting && selectedMetal && selectedCarat) {
+      calculateCurrentPrice();
+    }
+  }, [selectedStone, selectedSetting, selectedMetal, selectedCarat]);
+
+  const loadInitialData = async () => {
+    try {
+      setLoading(true);
+      const [stonesData, settingsData, metalsData] = await Promise.all([
+        RingBuilderAPI.getStones(),
+        RingBuilderAPI.getSettings(),
+        RingBuilderAPI.getMetals()
+      ]);
+      
+      setStones(stonesData);
+      setSettings(settingsData);
+      setMetals(metalsData);
+      setError(null);
+    } catch (err) {
+      setError('Failed to load ring builder data. Please refresh the page.');
+      toast({
+        title: "Error Loading Data",
+        description: "Please refresh the page and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const calculateCurrentPrice = async () => {
+    try {
+      setPriceLoading(true);
+      const price = await calculatePrice(selectedStone, selectedSetting, selectedMetal, selectedCarat);
+      setCurrentPrice(price);
+    } catch (err) {
+      console.error('Price calculation error:', err);
+      // Fallback to 0 if API fails
+      setCurrentPrice(0);
+    } finally {
+      setPriceLoading(false);
+    }
+  };
+
+  const handleQuizComplete = async (personalityResult, quizAnswers) => {
+    setQuizResults(personalityResult);
+    
+    try {
+      // Get recommendations from API
+      const analysisResponse = await RingBuilderAPI.analyzeQuiz(quizAnswers);
+      setRecommendations(analysisResponse.recommendation);
+      setShowRecommendations(true);
+    } catch (err) {
+      console.error('Failed to get recommendations:', err);
+      toast({
+        title: "Recommendations Unavailable",
+        description: "We'll help you choose the perfect ring manually.",
+        variant: "default",
+      });
+    }
+    
     setCurrentStep('stone');
   };
 
   const applyRecommendations = () => {
-    const recommendation = ringData.recommendations[quizResults];
-    if (recommendation) {
-      const stone = ringData.stones.find(s => s.cut === recommendation.stone);
-      const setting = ringData.settings.find(s => s.id === recommendation.setting);
-      const metal = ringData.metals.find(m => m.id === recommendation.metal);
-      
-      if (stone) setSelectedStone(stone);
-      if (setting) setSelectedSetting(setting);
-      if (metal) setSelectedMetal(metal);
-      setShowRecommendations(false);
-      setCurrentStep('summary');
-    }
+    if (!recommendations) return;
+    
+    // Find matching products based on recommendations
+    const recommendedStone = stones.find(s => s.cut === recommendations.stone);
+    const recommendedSetting = settings.find(s => s.name.toLowerCase().includes(recommendations.setting.toLowerCase()));
+    const recommendedMetal = metals.find(m => m.name.toLowerCase().includes(recommendations.metal.toLowerCase()));
+    
+    if (recommendedStone) setSelectedStone(recommendedStone);
+    if (recommendedSetting) setSelectedSetting(recommendedSetting);
+    if (recommendedMetal) setSelectedMetal(recommendedMetal);
+    
+    setShowRecommendations(false);
+    setCurrentStep('summary');
+    
+    toast({
+      title: "Recommendations Applied! ✨",
+      description: "We've selected the perfect combination for you.",
+    });
   };
 
   const nextStep = () => {
@@ -84,7 +162,56 @@ const RingBuilder = () => {
     }
   };
 
-  const currentPrice = calculatePrice(selectedStone, selectedSetting, selectedMetal, selectedCarat);
+  const handleBookConsultation = async () => {
+    if (selectedStone && selectedSetting && selectedMetal) {
+      try {
+        // Save configuration before redirecting
+        await RingBuilderAPI.saveConfiguration(
+          selectedStone.id,
+          selectedSetting.id,
+          selectedMetal.id,
+          selectedCarat,
+          quizResults
+        );
+        
+        toast({
+          title: "Configuration Saved! 🎉",
+          description: "Your ring details have been saved. Opening booking page...",
+        });
+      } catch (err) {
+        console.error('Failed to save configuration:', err);
+      }
+    }
+    
+    window.open('https://moissaniteengagementrings.com.au/pages/showroom-appointment', '_blank');
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-rose-50 to-amber-50 flex items-center justify-center">
+        <Card className="p-8 text-center">
+          <Sparkles className="h-12 w-12 text-rose-500 mx-auto mb-4 animate-spin" />
+          <h2 className="text-xl font-semibold mb-2">Loading Ring Builder</h2>
+          <p className="text-gray-600">Preparing your perfect ring experience...</p>
+        </Card>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-rose-50 to-amber-50 flex items-center justify-center">
+        <Card className="p-8 text-center max-w-md">
+          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold mb-2 text-red-600">Something went wrong</h2>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <Button onClick={loadInitialData} className="bg-rose-500 hover:bg-rose-600">
+            Try Again
+          </Button>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-rose-50 to-amber-50 py-8">
@@ -116,7 +243,7 @@ const RingBuilder = () => {
         </div>
 
         {/* Recommendations Banner */}
-        {showRecommendations && quizResults && (
+        {showRecommendations && recommendations && (
           <Card className="mb-6 p-6 bg-gradient-to-r from-rose-100 to-amber-100 border-rose-200">
             <div className="flex items-start gap-4">
               <Star className="h-8 w-8 text-amber-500 mt-1" />
@@ -125,7 +252,7 @@ const RingBuilder = () => {
                   Perfect Match Found! ✨
                 </h3>
                 <p className="text-gray-700 mb-4">
-                  Based on your personality quiz, we recommend: {ringData.recommendations[quizResults].description}
+                  Based on your personality quiz: {recommendations.description}
                 </p>
                 <Button 
                   onClick={applyRecommendations}
@@ -150,7 +277,7 @@ const RingBuilder = () => {
               
               {currentStep === 'stone' && (
                 <StoneSelector
-                  stones={ringData.stones}
+                  stones={stones}
                   selected={selectedStone}
                   onSelect={setSelectedStone}
                   selectedCarat={selectedCarat}
@@ -160,7 +287,7 @@ const RingBuilder = () => {
               
               {currentStep === 'setting' && (
                 <SettingSelector
-                  settings={ringData.settings}
+                  settings={settings}
                   selected={selectedSetting}
                   onSelect={setSelectedSetting}
                 />
@@ -168,7 +295,7 @@ const RingBuilder = () => {
               
               {currentStep === 'metal' && (
                 <MetalSelector
-                  metals={ringData.metals}
+                  metals={metals}
                   selected={selectedMetal}
                   onSelect={setSelectedMetal}
                 />
@@ -200,7 +327,9 @@ const RingBuilder = () => {
                       </div>
                       <div className="p-4 bg-green-50 rounded-lg">
                         <h4 className="font-semibold text-gray-800">Total Price</h4>
-                        <p className="text-2xl font-bold text-green-600">${currentPrice.toLocaleString()}</p>
+                        <p className="text-2xl font-bold text-green-600">
+                          ${priceLoading ? '...' : currentPrice.toLocaleString()}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -209,7 +338,7 @@ const RingBuilder = () => {
                     <Button 
                       size="lg"
                       className="w-full bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600"
-                      onClick={() => window.open('https://moissaniteengagementrings.com.au/pages/showroom-appointment', '_blank')}
+                      onClick={handleBookConsultation}
                     >
                       <BookOpen className="mr-2 h-5 w-5" />
                       Book Consultation
@@ -237,6 +366,7 @@ const RingBuilder = () => {
               setting={selectedSetting}
               metal={selectedMetal}
               carat={selectedCarat}
+              loading={priceLoading}
             />
             
             {/* Navigation */}
