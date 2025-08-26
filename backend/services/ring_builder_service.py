@@ -237,6 +237,7 @@ class RingBuilderService:
     # CRUD Operations
     async def get_all_stones(self) -> List[Stone]:
         """Get all active stones"""
+        await self._ensure_data_initialized()
         stones = await self.stones_collection.find({"is_active": True}).to_list(100)
         return [Stone(**stone) for stone in stones]
 
